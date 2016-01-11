@@ -2,6 +2,7 @@
 # include "rrdb.app.example.h"
 # include "rrdb.server.impl.h"
 # include "rrdb.check.h"
+# include "pegasus.profiler.h"
 
 int main(int argc, char** argv)
 {
@@ -13,6 +14,9 @@ int main(int argc, char** argv)
     dsn::register_app< ::dsn::replication::replication_service_app>("replica");
     dsn::register_app< ::dsn::apps::rrdb_client_app>("client");
     dsn::register_app< ::dsn::apps::rrdb_perf_test_client_app>("client.perf");
+
+    // register pegasus profiler
+    dsn::tools::register_toollet<::dsn::apps::pegasus_profiler>("pegasus_profiler");
 
     // register global checker if necesary
     dsn_register_app_checker("rrdb.checker",
