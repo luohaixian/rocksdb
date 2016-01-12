@@ -48,7 +48,7 @@ struct configParam {
         hashKeySize = 10;
         sortKeySize = 6;
         valueSize = 4;
-        qps = 300;
+        qps = 500;
         time = 1;
         type = "performance";
         //type = "pressure";
@@ -211,7 +211,6 @@ void do_main(irrdb_client* client,
             value=generateValue(sort_key, configPam.valueSize);
             do {
                 ret = client->set(hash_key, sort_key, value);
-                cout << "sss:" << ret << endl;
             } while(configPam.type == "pressure" && ret == dsn::apps::ERROR_TIMEOUT);
         }
         else if (type == "del") {

@@ -636,7 +636,8 @@ $(LIBRARY): $(LIBOBJECTS)
 	$(AM_V_at)$(AR) $(ARFLAGS) $@ $(LIBOBJECTS)
 
 db_bench: db/db_bench.o $(LIBOBJECTS) $(TESTUTIL)
-	$(AM_LINK)
+	$(AM_LINK) -L${DSN_ROOT}/lib -lrrdb.clientlib -lpthread  -lrt
+	cp ${DSN_ROOT}/lib/libdsn.core.so .
 
 cache_bench: util/cache_bench.o $(LIBOBJECTS) $(TESTUTIL)
 	$(AM_LINK)

@@ -71,6 +71,11 @@ int main() {
 #include "hdfs/env_hdfs.h"
 #include "utilities/merge_operators.h"
 
+#include "../replication/client_lib/include/rrdb_client.h"
+#include <stdlib.h>
+# include <boost/lexical_cast.hpp>
+using namespace dsn::apps;
+
 #ifdef OS_WIN
 #include <io.h>  // open/close
 #endif
@@ -171,8 +176,8 @@ DEFINE_string(benchmarks,
               "\tsstables    -- Print sstable info\n"
               "\theapprofile -- Dump a heap profile (if supported by this"
               " port)\n");
-
-DEFINE_int64(num, 1000000, "Number of key/values to place in database");
+//&&&
+DEFINE_int64(num, 100000, "Number of key/values to place in database");
 
 DEFINE_int64(numdistinct, 1000,
              "Number of distinct keys to use. Used in RandomWithVerify to "
@@ -1344,7 +1349,7 @@ class Stats {
     bytes_ += n;
   }
 
-  void Report(const Slice& name) {
+  void Report(const Slice& name, const bool run_flag = false) {
     // Pretend at least one op was done in case we are running a benchmark
     // that does not call FinishedOps().
     if (done_ < 1) done_ = 1;
@@ -1363,12 +1368,13 @@ class Stats {
     double elapsed = (finish_ - start_) * 1e-6;
     double throughput = (double)done_/elapsed;
 
-    fprintf(stdout, "%-12s : %11.3f micros/op %ld ops/sec;%s%s\n",
-            name.ToString().c_str(),
-            elapsed * 1e6 / done_,
-            (long)throughput,
-            (extra.empty() ? "" : " "),
-            extra.c_str());
+    fprintf(stdout, "%-20s  %-12s : %11.3f micros/op %ld ops/sec;%s%s\n",
+                run_flag ? "pegasus_rocksdb" : "original_rocksdb",
+                name.ToString().c_str(),
+                elapsed * 1e6 / done_,
+                (long)throughput,
+                (extra.empty() ? "" : " "),
+                extra.c_str());
     if (FLAGS_histogram) {
       fprintf(stdout, "Microseconds per op:\n%s\n", hist_.ToString().c_str());
     }
@@ -1485,6 +1491,9 @@ class Benchmark {
   int64_t merge_keys_;
   bool report_file_operations_;
   int cachedev_fd_;
+
+  std::string hash_key = "hash_key";
+  bool run_flag = false;
 
   bool SanityCheck() {
     if (FLAGS_compression_ratio > 1) {
@@ -1805,9 +1814,19 @@ class Benchmark {
     }
     PrintHeader();
     Open(&open_options_);
-    std::stringstream benchmark_stream(FLAGS_benchmarks);
-    std::string name;
-    while (std::getline(benchmark_stream, name, ',')) {
+    //std::stringstream benchmark_stream(FLAGS_benchmarks);
+    std::string names[] = {"fillseq", "fillseq", "fillsync", "fillsync" , "fillrandom", "fillrandom", "overwrite", "overwrite", "readrandom", "readrandom"};
+    //while (std::getline(benchmark_stream, name, ',')) {
+    for(int pos = 0; pos < 10; pos++) {
+
+      run_flag = !run_flag;
+      std::string name = names[pos];
+      if(pos < 6 && run_flag) {
+          int ret = system("replication/client_lib/onebox.sh clear");
+          if(ret != 0) {
+              std::cout << "system exec clear data error" << std::endl;
+          }
+      }
       // Sanitize parameters
       num_ = FLAGS_num;
       reads_ = (FLAGS_reads < 0 ? FLAGS_num : FLAGS_reads);
@@ -1977,8 +1996,13 @@ class Benchmark {
       }
 
       if (method != nullptr) {
-        fprintf(stdout, "DB path: [%s]\n", FLAGS_db.c_str());
-        RunBenchmark(num_threads, name, method);
+            if(pos == 0) {
+                fprintf(stdout, "DB path: [%s]\n", FLAGS_db.c_str());
+            }
+            if(pos % 2 == 0) {
+                std::cout << std::endl;
+            }
+            RunBenchmark(num_threads, name, method);
       }
       if (post_process_method != nullptr) {
         (this->*post_process_method)();
@@ -2074,30 +2098,28 @@ class Benchmark {
       arg[i].thread->shared = &shared;
       FLAGS_env->StartThread(ThreadBody, &arg[i]);
     }
-
     shared.mu.Lock();
     while (shared.num_initialized < n) {
       shared.cv.Wait();
     }
-
     shared.start = true;
     shared.cv.SignalAll();
     while (shared.num_done < n) {
       shared.cv.Wait();
     }
     shared.mu.Unlock();
-
     // Stats for some threads can be excluded.
     Stats merge_stats;
     for (int i = 0; i < n; i++) {
       merge_stats.Merge(arg[i].thread->stats);
     }
-    merge_stats.Report(name);
+    merge_stats.Report(name, run_flag);
 
     for (int i = 0; i < n; i++) {
       delete arg[i].thread;
     }
     delete[] arg;
+
   }
 
   void Crc32c(ThreadState* thread) {
@@ -2714,6 +2736,9 @@ class Benchmark {
     std::unique_ptr<const char[]> key_guard;
     Slice key = AllocateKey(&key_guard);
     int64_t stage = 0;
+
+    irrdb_client* client = rrdb_client_factory::get_client("rrdb.instance0");
+
     while (!duration.Done(entries_per_batch_)) {
       if (duration.GetStage() != stage) {
         stage = duration.GetStage();
@@ -2735,24 +2760,45 @@ class Benchmark {
         }
         int64_t rand_num = key_gens[id]->Next();
         GenerateKeyFromInt(rand_num, FLAGS_num, &key);
-        if (FLAGS_num_column_families <= 1) {
-          batch.Put(key, gen.Generate(value_size_));
-        } else {
-          // We use same rand_num as seed for key and column family so that we
-          // can deterministically find the cfh corresponding to a particular
-          // key while reading the key.
-          batch.Put(db_with_cfh->GetCfh(rand_num), key,
-                    gen.Generate(value_size_));
-        }
+
+        if(run_flag) {
+                std::string key_tmp(key.data(), key.size());
+                Slice temp = gen.Generate(value_size_);
+                std::string value_tmp(temp.data(), temp.size());
+                //std::cout << "set start" << std::endl;
+                int ret = client->set(hash_key, key_tmp, value_tmp);
+                //std::cout << "set end" << std::endl;
+                if(ret != dsn::apps::ERROR_OK) {
+                    std::cout << "put error" << std::endl;
+                }
+            } else {
+                if (FLAGS_num_column_families <= 1) {
+                  batch.Put(key, gen.Generate(value_size_));
+                } else {
+                  // We use same rand_num as seed for key and column family so that we
+                  // can deterministically find the cfh corresponding to a particular
+                  // key while reading the key.
+                  batch.Put(db_with_cfh->GetCfh(rand_num), key,
+                            gen.Generate(value_size_));
+                }
+            }
+
         bytes += value_size_ + key_size_;
       }
-      s = db_with_cfh->db->Write(write_options_, &batch);
+
+      if(!run_flag) {
+                s = db_with_cfh->db->Write(write_options_, &batch);
+        }
+
       thread->stats.FinishedOps(db_with_cfh, db_with_cfh->db,
                                 entries_per_batch_);
-      if (!s.ok()) {
-        fprintf(stderr, "put error: %s\n", s.ToString().c_str());
-        exit(1);
-      }
+
+      if(!run_flag) {
+              if (!s.ok()) {
+                fprintf(stderr, "put error: %s\n", s.ToString().c_str());
+                exit(1);
+              }
+        }
     }
     thread->stats.AddBytes(bytes);
   }
@@ -2879,12 +2925,16 @@ class Benchmark {
     int64_t read = 0;
     int64_t found = 0;
     int64_t bytes = 0;
-    ReadOptions options(FLAGS_verify_checksum, true);
+    //ReadOptions options(FLAGS_verify_checksum, true);
+    ReadOptions options;
     std::unique_ptr<const char[]> key_guard;
     Slice key = AllocateKey(&key_guard);
     std::string value;
 
     Duration duration(FLAGS_duration, reads_);
+
+    irrdb_client* client = rrdb_client_factory::get_client("rrdb.instance0");
+
     while (!duration.Done(1)) {
       DBWithColumnFamilies* db_with_cfh = SelectDBWithCfh(thread);
       // We use same key_rand as seed for key and column family so that we can
@@ -2894,24 +2944,39 @@ class Benchmark {
       GenerateKeyFromInt(key_rand, FLAGS_num, &key);
       read++;
       Status s;
-      if (FLAGS_num_column_families > 1) {
-        s = db_with_cfh->db->Get(options, db_with_cfh->GetCfh(key_rand), key,
-                                 &value);
-      } else {
-        s = db_with_cfh->db->Get(options, key, &value);
-      }
-      if (s.ok()) {
-        found++;
-        bytes += key.size() + value.size();
-      } else if (!s.IsNotFound()) {
-        fprintf(stderr, "Get returned an error: %s\n", s.ToString().c_str());
-        abort();
-      }
+
+      if(run_flag) {
+                std::string key_tmp(key.data(), key.size());
+                int ret = client->get(hash_key, key_tmp, value);
+                if(ret == dsn::apps::ERROR_OK) {
+                    found++;
+                    bytes += key.size() + value.size();
+                } else {
+                    fprintf(stderr, "Get returned an error: %s\n", client->get_error_string(ret) );
+                    abort();
+                }
+            } else {
+                if (FLAGS_num_column_families > 1) {
+                  s = db_with_cfh->db->Get(options, db_with_cfh->GetCfh(key_rand), key,
+                                           &value);
+                } else {
+                  s = db_with_cfh->db->Get(options, key, &value);
+                }
+                if (s.ok()) {
+                  found++;
+                  bytes += key.size() + value.size();
+                } else if (!s.IsNotFound()) {
+                  fprintf(stderr, "Get returned an error: %s\n", s.ToString().c_str());
+                  abort();
+                }
+            }
+
+
       thread->stats.FinishedOps(db_with_cfh, db_with_cfh->db, 1);
     }
 
     char msg[100];
-    snprintf(msg, sizeof(msg), "(%" PRIu64 " of %" PRIu64 " found)\n",
+    snprintf(msg, sizeof(msg), "(%" PRIu64 " of %" PRIu64 " found)",
              found, read);
 
     thread->stats.AddBytes(bytes);
@@ -4023,6 +4088,11 @@ int main(int argc, char** argv) {
   }
 
   rocksdb::Benchmark benchmark;
+  bool init = rrdb_client_factory::initialize("replication/client_lib/perf/config.ini");
+  if (!init) {
+      std::cerr << "Init failed" << std::endl;
+      return -1;
+  }
   benchmark.Run();
   return 0;
 }
