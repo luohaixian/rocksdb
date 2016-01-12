@@ -4088,6 +4088,13 @@ int main(int argc, char** argv) {
   }
 
   rocksdb::Benchmark benchmark;
+  std::string path = "../rDSN/builder/bin/dsn.ddlclient/";
+  std::string command = path + "dsn.ddlclient " + path + "config.ini create_app -name rrdb.instance0  -type rrdb";
+  int ret = system(command.c_str());
+  if(ret != 0) {
+      std::cout << "create table error" << std::endl;
+      return -1;
+  }
   bool init = rrdb_client_factory::initialize("replication/client_lib/perf/config.ini");
   if (!init) {
       std::cerr << "Init failed" << std::endl;

@@ -8,6 +8,7 @@
 
 #include "rrdb_client.h"
 # include <boost/lexical_cast.hpp>
+#include <stdlib.h>
 
 #include <sys/time.h>
 #include <iostream>
@@ -522,6 +523,14 @@ int main(int argc, char** argv)
     {
         std::cout << "Run client ... " << std::endl;
 
+        std::string path = "../../../../rDSN/builder/bin/dsn.ddlclient/";
+        std::string command = path + "dsn.ddlclient " + path + "config.ini create_app -name rrdb.instance0  -type rrdb";
+        int ret = system(command.c_str());
+        if(ret != 0) {
+            std::cout << "create table error" << std::endl;
+            return -1;
+        }
+
         bool init = rrdb_client_factory::initialize("config.ini");
         if (!init) {
             std::cerr << "Init failed" << std::endl;
@@ -563,7 +572,13 @@ int main(int argc, char** argv)
     else
     {
         std::cout << "Run client ... " << std::endl;
-
+        std::string path = "../../../../rDSN/builder/bin/dsn.ddlclient/";
+        std::string command = path + "dsn.ddlclient " + path + "config.ini create_app -name rrdb.instance0  -type rrdb";
+        int ret = system(command.c_str());
+        if(ret != 0) {
+            std::cout << "create table error" << std::endl;
+            return -1;
+        }
         bool init = rrdb_client_factory::initialize("config.ini");
         if (!init) {
             std::cerr << "Init failed" << std::endl;
